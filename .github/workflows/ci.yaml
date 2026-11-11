@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+env:
+  # Keep in sync with .fvmrc and .github/workflows/build.yaml.
+  FLUTTER_VERSION: '0b771a584214b44aa1f94f9707f2756207356f41'
+  FLUTTER_CHANNEL: 'master'
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Git config for codegen
+        run: |
+          git config --global user.name 'reveric-ci'
+          git config --global user.email 'reveric-ci@users.noreply.github.com'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Generated .g.dart / .drift.dart files are committed, so codegen must
+      # be a no-op on a clean checkout; a diff proves a stale or missing
+      # generated file.
+      - name: Verify codegen is up to date
+        run: |
+          flutter pub run build_runner build --delete-conflicting-outputs
+          if [ -n "$(git status --porcelain -- '*.g.dart' '*.drift.dart' '*.freezed.dart' '*.json.dart')" ]; then
+            echo '::error::Generated files are out of date. Run make codegen and commit the results.'
+            git status --porcelain -- '*.g.dart' '*.drift.dart' '*.freezed.dart' '*.json.dart'
+            exit 1
+          fi
+
+      - name: Analyze
+        run: flutter analyze --fatal-infos
+
+      # Flutter tests must run serially, never in parallel shards.
+      - name: Test
+        run: flutter test --reporter expanded
