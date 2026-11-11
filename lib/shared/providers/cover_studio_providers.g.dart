@@ -105,7 +105,7 @@ final class CoverStudioControllerProvider
 }
 
 String _$coverStudioControllerHash() =>
-    r'536811c60b46991de9654841770500d999d5cf74';
+    r'97364af9f1f3040daf062be6f9fe4c7c845fe56f';
 
 final class CoverStudioControllerFamily extends $Family
     with
