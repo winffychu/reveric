@@ -67,7 +67,7 @@ VideoRequest agnes({
 
 VideoReference ref(VideoInputRole role) => VideoReference(
   role: role,
-  url: Uri.parse('https://reference.example/${role.name}'),
+  url: 'https://reference.example/${role.name}',
   mimeType: switch (role.kind) {
     VideoMediaKind.image => 'image/png',
     VideoMediaKind.video => 'video/mp4',
@@ -272,8 +272,8 @@ void main() {
         }),
         'job_1',
       );
-      for (final json in [
-        {},
+      for (final Map<String, dynamic> json in [
+        <String, dynamic>{},
         {'video_id': 'video_long'},
         {'id': '  '},
       ]) {
