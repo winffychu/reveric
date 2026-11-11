@@ -20,7 +20,7 @@ jobs:
       # super_native_extensions builds native assets on Linux, which needs
       # the GTK development libraries (glib-2.0, gobject-2.0, atk, etc.).
       - name: Install Linux native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libgobject-2.0-dev libatk1.0-dev
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libatk1.0-dev
 
       - uses: subosito/flutter-action@v2
         with:
