@@ -43,6 +43,20 @@ jobs:
             exit 1
           fi
 
+      # Local Flutter SDK is unavailable for some contributors: upload the
+      # regenerated outputs so the freshness failure can be fixed without a
+      # local SDK.
+      - name: Upload regenerated outputs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-outputs
+          path: |
+            lib/**/*.g.dart
+            lib/**/*.drift.dart
+            test/**/*.g.dart
+          if-no-files-found: ignore
+
       - name: Analyze
         run: flutter analyze --fatal-infos
 
