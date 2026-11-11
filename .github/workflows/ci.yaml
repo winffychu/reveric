@@ -57,11 +57,11 @@ jobs:
             test/**/*.g.dart
           if-no-files-found: ignore
 
-      # Default severity: errors and warnings fail the build, infos are
-      # reported but tolerated -- the repo carries ~460 pre-existing infos
-      # (mostly in third/ vendored code) that are not ours to clean up.
+      # Errors and warnings fail the build; infos are reported but tolerated
+      # because flutter analyze treats them as fatal by default and the repo
+      # carries ~460 pre-existing infos (mostly third/ vendored code).
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       # Flutter tests must run serially, never in parallel shards.
       - name: Test
