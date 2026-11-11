@@ -1,0 +1,38 @@
+name: Codegen commit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: '0b771a584214b44aa1f94f9707f2756207356f41'
+          cache: true
+
+      - name: Regenerate outputs
+        run: flutter pub run build_runner build
+
+      - name: Commit regenerated files
+        run: |
+          git config user.name 'reveric-ci'
+          git config user.email 'reveric-ci@users.noreply.github.com'
+          if git diff --quiet; then
+            echo 'No generated file changes; nothing to commit'
+            exit 0
+          fi
+          git add -A
+          git commit -m "chore: regenerate riverpod outputs for GPT Image 2.6 providers"
+          git push origin HEAD:main
