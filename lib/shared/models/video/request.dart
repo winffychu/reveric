@@ -12,6 +12,7 @@ enum VideoProtocol {
   new_api_video,
   atlascloud_video,
   purefox_media,
+  openai_videos,
 }
 
 enum VideoMode { text, first_frame, first_last_frame, reference }

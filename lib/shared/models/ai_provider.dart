@@ -127,6 +127,7 @@ const Map<AiProviderType, AiProviderTypeConfig> aiProviderTypeConfigs = {
     modelIdSource: ModelIdSource.open,
     textModelKinds: _chatOnlyKinds,
     imageProtocol: ImageProtocol.openai_images,
+    videoProtocol: VideoProtocol.openai_videos,
   ),
   AiProviderType.codex: AiProviderTypeConfig(
     displayName: 'Codex',
@@ -140,6 +141,7 @@ const Map<AiProviderType, AiProviderTypeConfig> aiProviderTypeConfigs = {
     modelIdSource: ModelIdSource.open,
     textModelKinds: _chatOnlyKinds,
     imageProtocol: ImageProtocol.openai_images,
+    videoProtocol: VideoProtocol.openai_videos,
   ),
   AiProviderType.api88: AiProviderTypeConfig(
     displayName: '88API',

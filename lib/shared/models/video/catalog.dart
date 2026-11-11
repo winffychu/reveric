@@ -26,6 +26,43 @@ const _audioFormats = {'audio/mpeg', 'audio/wav', 'audio/x-wav'};
 /// 官方 ID 对应的模型目录；渠道名称通过 [lookupVideoModel] 匹配已登记别名。
 /// 运行时目录：获取模型后可登记站点返回的动态型号。
 final Map<String, VideoModelCatalogEntry> videoModelsCatalog = {
+  // OpenAI Videos API: https://platform.openai.com/docs/api-reference/videos/create
+  // size 是 WxH 枚举（720x1280/1280x720/1024x1792/1792x1024），由客户端查
+  // 显式表发送，目录只登记 resolution/ratio 档位。
+  'sora-2': VideoModelCatalogEntry(
+    capabilities: VideoModelCapabilities(
+      resolutions: {'720p'},
+      ratios: {'16:9', '9:16'},
+      durations: {4, 8, 12},
+      frameRoles: {VideoInputRole.first_frame},
+      maxReferences: 1,
+      allowsReferenceMode: false,
+      supportsAudioOnlyReference: false,
+      references: {
+        VideoMediaKind.image: VideoReferenceLimits(
+          maxCount: 1,
+          mimeTypes: ConfigValue(_imageFormats),
+        ),
+      },
+    ),
+  ),
+  'sora-2-pro': VideoModelCatalogEntry(
+    capabilities: VideoModelCapabilities(
+      resolutions: {'720p', '1080p'},
+      ratios: {'16:9', '9:16'},
+      durations: {4, 8, 12},
+      frameRoles: {VideoInputRole.first_frame},
+      maxReferences: 1,
+      allowsReferenceMode: false,
+      supportsAudioOnlyReference: false,
+      references: {
+        VideoMediaKind.image: VideoReferenceLimits(
+          maxCount: 1,
+          mimeTypes: ConfigValue(_imageFormats),
+        ),
+      },
+    ),
+  ),
   // AtlasCloud endpoint specifications: https://www.atlascloud.ai/docs/openapi-index
   'kwaivgi-kling-v4.0': VideoModelCatalogEntry(
     capabilities: VideoModelCapabilities(

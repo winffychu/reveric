@@ -17,6 +17,7 @@ String videoProviderType(VideoProtocol protocol) => switch (protocol) {
   VideoProtocol.openrouter_video => 'openrouter',
   VideoProtocol.atlascloud_video => 'atlascloud',
   VideoProtocol.purefox_media => 'purefox_media',
+  VideoProtocol.openai_videos => 'openai_compatible',
 };
 
 String audioProviderType(AudioProtocol protocol) => switch (protocol) {

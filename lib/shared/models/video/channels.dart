@@ -2379,6 +2379,12 @@ const videoChannelModels = <VideoProtocol, Map<String, VideoChannelModel>>{
       ),
     ),
   },
+  // OpenAI 官方与讲同一契约的网关（sub2api、new-api 等）；轮询与下载走
+  // GET /v1/videos/{id} 与鉴权 /content。
+  VideoProtocol.openai_videos: {
+    'sora-2': VideoChannelModel(catalogId: 'sora-2'),
+    'sora-2-pro': VideoChannelModel(catalogId: 'sora-2-pro'),
+  },
 };
 
 const _metasoH3Capabilities = VideoModelCapabilities(
@@ -2518,6 +2524,15 @@ final _providerVideoModels = <String, Map<String, VideoChannelModel>>{
   },
   // 站点只接受自己返回的模型 ID；目录在「获取模型」时按 `/v1/models` 登记。
   'purefox_media': purefoxMediaVideoModels,
+  // OpenAI Compatible 渠道可指向 Agnes 官方网关（apihub.agnes-ai.com）或
+  // 透明转发 Agnes 路径的站点：这些站点讲 OpenAI Videos 路径形状但请求体
+  // 是 Agnes 方言，客户端按目录型号分派；OpenAI 官方渠道不会有 agnes 型号。
+  'openai_compatible': {
+    'agnes-video-2.5': VideoChannelModel(catalogId: 'agnes-video-2.5'),
+    'agnes-video-2.5-flash': VideoChannelModel(
+      catalogId: 'agnes-video-2.5-flash',
+    ),
+  },
 };
 
 /// PureFox 媒体网关的视频型号目录：不预置，填 key 后按站点 `/v1/models`

@@ -25,6 +25,7 @@ import 'package:reveric/shared/services/ai/video/openrouter.dart';
 import 'package:reveric/shared/services/ai/video/agnes.dart';
 import 'package:reveric/shared/services/ai/video/client.dart';
 import 'package:reveric/shared/services/ai/video/minimax.dart';
+import 'package:reveric/shared/services/ai/video/openai_videos.dart';
 import 'package:reveric/shared/services/ai/video/purefox.dart';
 import 'package:reveric/shared/services/ai/video/wan.dart';
 import '../../../../helpers/media_provider_types.dart';
@@ -147,6 +148,12 @@ VideoClient client(VideoProtocol protocol, http.Client transport) =>
         endpoint: Uri.parse('https://example.com/proxy/v1'),
         apiKey: 'secret',
       ),
+      VideoProtocol.openai_videos => OpenAIVideosClient(
+        httpClient: transport,
+        providerType: videoProviderType(protocol),
+        endpoint: Uri.parse('https://example.com/proxy/v1'),
+        apiKey: 'secret',
+      ),
     };
 
 Map<String, dynamic> receipt(VideoProtocol protocol) => switch (protocol) {
@@ -169,6 +176,7 @@ Map<String, dynamic> receipt(VideoProtocol protocol) => switch (protocol) {
   VideoProtocol.purefox_media => throw UnimplementedError(
     'PureFox receipts are NDJSON frames, covered by purefox_test.dart',
   ),
+  VideoProtocol.openai_videos => {'id': 'task-1'},
 };
 Map<String, dynamic> result(
   VideoProtocol protocol,
@@ -227,6 +235,15 @@ Map<String, dynamic> result(
   VideoProtocol.purefox_media => throw UnimplementedError(
     'PureFox results are NDJSON frames, covered by purefox_test.dart',
   ),
+  VideoProtocol.openai_videos => {
+    'id': 'task-1',
+    'status': switch (status) {
+      'running' => 'in_progress',
+      'succeeded' => 'completed',
+      _ => status,
+    },
+    if (withUrl) 'url': 'https://result.example/movie.mp4',
+  },
 };
 
 void main() {
@@ -559,7 +576,11 @@ void main() {
   );
   for (final protocol in VideoProtocol.values.where(
     // PureFox 的型号目录由 /v1/models 运行时登记，NDJSON 协议在 purefox_test.dart 覆盖。
-    (protocol) => protocol != VideoProtocol.purefox_media,
+    // OpenAI Videos 的官方/Agnes 双方言与通用 content 断言不匹配，专项用例
+    // 在 openai_videos_test.dart 覆盖。
+    (protocol) =>
+        protocol != VideoProtocol.purefox_media &&
+        protocol != VideoProtocol.openai_videos,
   )) {
     test(
       '$protocol preserves output review failure on a successful poll',

@@ -44,6 +44,7 @@ import 'atlascloud.dart';
 import 'client.dart';
 import 'draft.dart';
 import 'minimax.dart';
+import 'openai_videos.dart';
 import 'openrouter.dart';
 import 'purefox.dart';
 import '../new_api.dart';
@@ -1284,6 +1285,12 @@ class VideoTaskService {
         apiKey: apiKey,
       ),
       VideoProtocol.purefox_media => PurefoxVideoClient(
+        httpClient: transport,
+        providerType: type,
+        endpoint: endpoint,
+        apiKey: apiKey,
+      ),
+      VideoProtocol.openai_videos => OpenAIVideosClient(
         httpClient: transport,
         providerType: type,
         endpoint: endpoint,
