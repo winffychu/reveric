@@ -14,7 +14,7 @@ jobs:
   analyze-and-test:
     # Supported platforms are Windows, macOS and Android (see AGENTS.md).
     # Golden files are captured on macOS, and the plugin tests need a locally
-    # built fjs dylib, so macOS is the only runner that can run the suite.
+    # built fjs dylib, so macOS is the only runner that can run the full suite.
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -76,3 +76,51 @@ jobs:
         run: |
           export FJS_PROBE_LIBRARY="$PWD/third/fjs/build/darwin-xcframework/rust/aarch64-apple-darwin/release/libfjs.dylib"
           flutter test -j 1 --reporter expanded
+
+  # Fast platform-neutral verification that does not queue on the flaky
+  # macOS arm64 hosted runners: analyze plus the tests that pass anywhere
+  # (no golden pixels, no native fjs probe, no platform plugins). Excludes
+  # were derived from the Linux failure list of run 43076979109.
+  analyze-and-core-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # super_native_extensions builds native assets on Linux, which needs
+      # the GTK development libraries (glib, gdk, atk, etc.).
+      - name: Install Linux native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libgtk-3-dev
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Git config for codegen
+        run: |
+          git config --global user.name 'reveric-ci'
+          git config --global user.email 'reveric-ci@users.noreply.github.com'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify codegen is up to date
+        run: |
+          flutter pub run build_runner build --delete-conflicting-outputs
+          if [ -n "$(git status --porcelain -- '*.g.dart' '*.drift.dart' '*.freezed.dart' '*.json.dart')" ]; then
+            echo '::error::Generated files are out of date. Run make codegen and commit the results.'
+            git status --porcelain -- '*.g.dart' '*.drift.dart' '*.freezed.dart' '*.json.dart'
+            exit 1
+          fi
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test platform-neutral suites
+        run: |
+          flutter test -j 1 --reporter expanded \
+            test/shared/services/ai \
+            test/shared/database \
+            test/shared/models
