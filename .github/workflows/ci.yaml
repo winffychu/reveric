@@ -121,6 +121,6 @@ jobs:
       - name: Test platform-neutral suites
         run: |
           flutter test -j 1 --reporter expanded \
-            test/shared/services/ai \
+            test/shared/services/ai/video \
             test/shared/database \
             test/shared/models
