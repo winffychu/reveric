@@ -138,7 +138,7 @@ class NovelCollections extends Table {
   TextColumn get filter =>
       text().nullable().map(const CollectionFilterConverter())();
 
-  /// 集合所属的作品类型；null 表示小说库和剧本库共用（只有默认集合）。
+  /// 集合所属的作品类型。null 只留给各库共用的内置「全部」。
   /// 取值由 Dart 侧 [validateContentKind] 校验。
   TextColumn get contentKind => text().nullable()();
   DateTimeColumn get createdAt =>
@@ -470,6 +470,8 @@ class ProviderAssets extends Table {
 }
 
 class GenerationTasks extends Table {
+  TextColumn get imageOutputs =>
+      text().map(const ImageTaskOutputsConverter()).nullable()();
   TextColumn get kind => textEnum<GenerationKind>()();
   TextColumn get id => text()();
 
@@ -1277,7 +1279,7 @@ class AppDatabase extends _$AppDatabase {
 
   static _CachedAppDatabase? _cachedDatabase;
 
-  static const currentSchemaVersion = 5;
+  static const currentSchemaVersion = 6;
 
   @override
   int get schemaVersion => currentSchemaVersion;
@@ -1328,6 +1330,18 @@ class AppDatabase extends _$AppDatabase {
         } catch (error, stackTrace) {
           _log.error(
             '[DB] ALTER provider_assets schema=5',
+            error: error,
+            stackTrace: stackTrace,
+          );
+          rethrow;
+        }
+      }
+      if (from < 6) {
+        try {
+          await migrations.migrateToV6(migrator);
+        } catch (error, stackTrace) {
+          _log.error(
+            '[DB] ALTER generation_tasks ADD image_outputs schema=6',
             error: error,
             stackTrace: stackTrace,
           );
@@ -1496,6 +1510,10 @@ extension AssetMediaSummary on AssetRow {
 }
 
 extension GenerationTaskRequest on GenerationTask {
+  List<String> get resultAssetIds => imageOutputs == null
+      ? [?resultAssetId]
+      : [for (final item in imageOutputs!.items) ?item.assetId];
+
   AudioRequest get audioRequest =>
       (requestJson as AudioGenerationRequest).request;
   VideoRequest get videoRequest =>

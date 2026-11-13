@@ -36,6 +36,8 @@ enum AiProviderType {
   codex,
   openai_compatible,
   api88,
+  apikey,
+  infistar,
   ooki,
   openrouter,
   xai,
@@ -164,6 +166,20 @@ const Map<AiProviderType, AiProviderTypeConfig> aiProviderTypeConfigs = {
     fixedBaseUrl: true,
     usesNewApi: true,
   ),
+  AiProviderType.apikey: AiProviderTypeConfig(
+    displayName: 'APIKEY.FAN',
+    modelIdSource: ModelIdSource.open,
+    textModelKinds: _chatOnlyKinds,
+    fixedBaseUrl: true,
+    usesNewApi: true,
+  ),
+  AiProviderType.infistar: AiProviderTypeConfig(
+    displayName: '无限星河',
+    modelIdSource: ModelIdSource.open,
+    textModelKinds: _chatOnlyKinds,
+    fixedBaseUrl: true,
+    usesNewApi: true,
+  ),
   AiProviderType.ooki: AiProviderTypeConfig(
     displayName: 'OOKiAPI',
     modelIdSource: ModelIdSource.open,
@@ -259,6 +275,7 @@ const Map<AiProviderType, AiProviderTypeConfig> aiProviderTypeConfigs = {
     displayName: 'MiniMax',
     modelIdSource: ModelIdSource.open,
     textModelKinds: _chatOnlyKinds,
+    imageProtocol: ImageProtocol.minimax_image,
     videoProtocol: VideoProtocol.minimax_video_v2,
     audioProtocol: AudioProtocol.minimax_music,
   ),
@@ -267,6 +284,7 @@ const Map<AiProviderType, AiProviderTypeConfig> aiProviderTypeConfigs = {
     modelIdSource: ModelIdSource.open,
     imageProtocol: ImageProtocol.agnes_image,
     videoProtocol: VideoProtocol.agnes_video,
+    fixedBaseUrl: true,
   ),
   AiProviderType.purefox: AiProviderTypeConfig(
     displayName: 'PureFox',
@@ -303,8 +321,11 @@ String aiProviderFixedBaseUrl(AiProviderType type) => switch (type) {
   AiProviderType.moss => 'https://api.mosi.cn/v1',
   AiProviderType.metaso => 'https://metaso.cn/api/minimax',
   AiProviderType.api88 => 'https://api.88api.ai/v1',
+  AiProviderType.apikey => 'https://api.apikey.fan/v1',
+  AiProviderType.infistar => 'https://infistar.cc/v1',
   AiProviderType.ooki => 'https://api.ookiapi.com/v1',
   AiProviderType.atlascloud => 'https://api.atlascloud.ai/v1',
+  AiProviderType.agnes => agnesDefaultBaseUrl,
   AiProviderType.codex => 'https://chatgpt.com/backend-api/codex',
   AiProviderType.openrouter => 'https://openrouter.ai/api/v1',
   AiProviderType.volcengine => 'https://ark.cn-beijing.volces.com/api/v3',
@@ -316,7 +337,13 @@ String aiProviderFixedBaseUrl(AiProviderType type) => switch (type) {
 /// Codex 新配置的预设目录。
 const codexPresetModels = <String>['gpt-6-astra', 'gpt-6-luna', 'gpt-6.1-sol'];
 
-const codexPresetImageModels = <String>['gpt-image-2'];
+const codexPresetImageModels = <String>[
+  'gpt-image-2.6-sunburst',
+  'gpt-image-2.6-flare',
+  'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-flare',
+  'gpt-image-2',
+];
 
 /// MiniMax 没有公开的模型列表接口，「获取模型」使用这份目录。
 const minimaxPresetChatModels = <String>[
@@ -391,6 +418,27 @@ final List<AiProvider> aiProviderBuiltinDefaults = [
     enabled: false,
     apiKey: '',
     baseUrl: aiProviderFixedBaseUrl(AiProviderType.api88),
+    models: const [],
+    imageModels: const [],
+    audioModels: const [],
+    videoModels: const [],
+    embeddingModels: const [],
+    temperature: 0.7,
+    maxTurns: 512,
+    proxyUrl: '',
+    proxyUsername: '',
+    proxyPassword: '',
+    updatedAt: _builtinEpoch,
+    deletedAt: notDeletedSentinel,
+  ),
+  AiProvider(
+    id: 'apikey',
+    name: 'APIKEY.FAN',
+    builtin: true,
+    type: 'apikey',
+    enabled: false,
+    apiKey: '',
+    baseUrl: aiProviderFixedBaseUrl(AiProviderType.apikey),
     models: const [],
     imageModels: const [],
     audioModels: const [],
@@ -540,6 +588,8 @@ final List<AiProvider> aiProviderBuiltinDefaults = [
     apiKey: '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     models: [
+      'gemini-4-carbon',
+      'gemini-4-argon',
       'gemini-3.1-pro-preview',
       'gemini-3-flash-preview',
       'gemini-3.1-flash-lite-preview',
@@ -751,8 +801,6 @@ extension AiProviderX on AiProvider {
       ? qwenBaseUrl(baseUrl)
       : typeEnum == AiProviderType.minimax && baseUrl.trim().isEmpty
       ? 'https://api.minimax.cn'
-      : typeEnum == AiProviderType.agnes && baseUrl.trim().isEmpty
-      ? agnesDefaultBaseUrl
       : baseUrl;
 
   bool get hasFixedBaseUrl => typeConfig.fixedBaseUrl;

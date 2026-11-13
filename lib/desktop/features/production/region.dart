@@ -1,4 +1,4 @@
-// 职责: 组合当前集的制作视图、剪辑和导演台，共用聊天浮层并管理离开保护与媒体导入导出。
+// 职责: 复用剧本与独立画布的制作主体，组合剪辑、导演台并管理编辑离开保护与媒体导入。
 // 关联文件:
 //   lib/desktop/features/production/board.dart
 //   lib/desktop/features/production/composer.dart
@@ -16,6 +16,7 @@ import 'dart:async';
 import 'package:reveric/shared/models/asset_purpose.dart';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
+import '../../../shared/models/ai_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -61,8 +62,14 @@ import '../canvas/widgets/floating_cluster.dart';
 import '../screenplay/chrome.dart';
 import '../storyboard/region.dart';
 import 'board.dart';
+import 'history_region.dart';
+import 'history_actions.dart';
 import '../editing/shell.dart';
 import 'canvas_controls.dart';
+import 'canvas_empty.dart';
+import 'text_composer.dart';
+import 'text_node.dart';
+import '../../../shared/models/content_kind.dart';
 import 'subject_picker.dart';
 import 'node_bar.dart';
 import 'depth_dialog.dart';
@@ -80,7 +87,16 @@ import 'scene_recognition.dart';
 import '../../../shared/widgets/screenplay/director_shell.dart';
 
 /// 向聊天发一段制片相关的话；带 [files] 时这些文件作为附件放在正文之前。
-typedef ProductionAsk = void Function(String prompt, {List<XFile> files});
+/// [send] 为 true 时打开聊天后直接发送，否则只预填、由用户补完再发。
+/// 带 [model] 时用该模型和 [effort] 档位新开对话并直接发送。
+typedef ProductionAsk =
+    void Function(
+      String prompt, {
+      List<XFile> files,
+      bool send,
+      AiModelOption? model,
+      String? effort,
+    });
 
 class ProductionRegion extends HookConsumerWidget {
   const ProductionRegion({
@@ -119,8 +135,19 @@ class ProductionRegion extends HookConsumerWidget {
         final episodeId = workspace.episodeId!;
         final ask = onAsk == null
             ? null
-            : (String prompt, {List<XFile> files = const []}) =>
-                  askRef.value?.call(prompt, files: files);
+            : (
+                String prompt, {
+                List<XFile> files = const [],
+                bool send = false,
+                AiModelOption? model,
+                String? effort,
+              }) => askRef.value?.call(
+                prompt,
+                files: files,
+                send: send,
+                model: model,
+                effort: effort,
+              );
         Future<void> recognize(
           BuildContext context, {
           required Future<void> Function() reset,
@@ -173,16 +200,27 @@ class ProductionRegion extends HookConsumerWidget {
               selectedClipId,
             ),
             registerFlush: registerEditing,
-            builder: (open, register) => _EpisodeRegion(
+            builder: (open, register) => ProductionHistoryRegion(
               key: ValueKey(workspace.episodeId),
               novel: novel,
               episodeId: workspace.episodeId!,
-              registerFlush: register,
-              selectedClipId: selectedClipId,
-              sceneActions: ProductionSceneActions(
-                ask: ask,
-                openDirector: open,
-                openEditing: openEditing,
+              child: ProductionTextAsk(
+                ask: ask == null
+                    ? null
+                    : (prompt, {model, effort}) =>
+                          ask(prompt, send: true, model: model, effort: effort),
+                child: ProductionCanvasRegion(
+                  key: ValueKey(workspace.episodeId),
+                  novel: novel,
+                  episodeId: workspace.episodeId!,
+                  registerFlush: register,
+                  selectedClipId: selectedClipId,
+                  sceneActions: ProductionSceneActions(
+                    ask: ask,
+                    openDirector: open,
+                    openEditing: openEditing,
+                  ),
+                ),
               ),
             ),
           ),
@@ -217,8 +255,8 @@ class ProductionRegion extends HookConsumerWidget {
   }
 }
 
-class _EpisodeRegion extends HookConsumerWidget {
-  const _EpisodeRegion({
+class ProductionCanvasRegion extends HookConsumerWidget {
+  const ProductionCanvasRegion({
     super.key,
     required this.novel,
     required this.episodeId,
@@ -233,20 +271,24 @@ class _EpisodeRegion extends HookConsumerWidget {
   final ProductionSceneActions sceneActions;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final textAsk = ProductionTextAsk.of(context);
+    final canvasWork = novel.contentKind == contentKindCanvas;
     final path = novel.contentDatabasePath!;
     final shots = ref.watch(storyboardServiceProvider(path));
     final library = ref.watch(mediaLibraryServiceProvider);
-    final service = useMemoized(
-      () => ProductionCanvasService(shots, library, novel.id),
-      [shots, library, novel.id],
-    );
-    final canvas = useFuture(
-      useMemoized(() => service.ensureCanvas(episodeId), [service, episodeId]),
+    final scope = ProductionHistoryScope.of(context);
+    final service = scope.service;
+    final history = scope.history;
+    final canvas = AsyncSnapshot<CanvasEntry>.withData(
+      ConnectionState.done,
+      scope.canvas,
     );
     final viewProvider = productionViewProvider(novel.id);
     final viewState = ref.read(viewProvider.notifier);
     // 进入时停在左栏选的视图；之后左栏再切换由下方的 listen 带着焦点处理。
-    final view = useState(ref.read(viewProvider));
+    final view = useState(
+      canvasWork ? ProductionViewMode.canvas : ref.read(viewProvider),
+    );
     final chatProvider = productionChatProvider(novel.id);
     final chatState = ref.read(chatProvider.notifier);
     final chatOpen = ref.watch(chatProvider.select((s) => s.open));
@@ -271,9 +313,9 @@ class _EpisodeRegion extends HookConsumerWidget {
         });
       };
     }, [chatState]);
-    final workspace = ref.watch(
-      screenplayWorkspaceStateControllerProvider(novel.id, path),
-    );
+    final workspace = canvasWork
+        ? null
+        : ref.watch(screenplayWorkspaceStateControllerProvider(novel.id, path));
     final clips =
         ref.watch(storyboardShotsProvider(path, episodeId)).value ??
         <ProductionClipRow>[];
@@ -287,7 +329,7 @@ class _EpisodeRegion extends HookConsumerWidget {
     // 节点右键：在指针处打开工具条的「…」菜单；n 递增表示一次新请求。
     final menuRequest = useState<({String nodeId, Offset at, int n})?>(null);
     final imageJobs = ref.watch(imageTaskServiceProvider);
-    final session = useMemoized(ProductionEditSession.new);
+    final session = scope.session!;
     final camera = useMemoized(ProductionBoardCamera.new);
     final clipSnapshot = useStream(
       useMemoized(
@@ -414,9 +456,9 @@ class _EpisodeRegion extends HookConsumerWidget {
     }, [selectedClipId]);
 
     // 画布视图下在第二栏点场次：平移到这一场的第一个片段节点。
-    final lastScene = useRef(workspace.sceneId);
+    final lastScene = useRef(workspace?.sceneId);
     useEffect(() {
-      final sceneId = workspace.sceneId;
+      final sceneId = workspace?.sceneId;
       if (sceneId == lastScene.value) {
         return null;
       }
@@ -436,7 +478,7 @@ class _EpisodeRegion extends HookConsumerWidget {
         }
       });
       return null;
-    }, [workspace.sceneId]);
+    }, [workspace?.sceneId]);
 
     // 第二栏高亮跟着焦点走：片段视图跟定位的片段，画布视图跟选中节点。
     // 先记下 lastScene，免得上面的「点场次就平移」把选中节点挤掉。
@@ -448,7 +490,7 @@ class _EpisodeRegion extends HookConsumerWidget {
         .firstOrNull
         ?.sceneId;
     useEffect(() {
-      if (focusScene == null || focusScene == workspace.sceneId) {
+      if (focusScene == null || focusScene == workspace?.sceneId) {
         return null;
       }
       lastScene.value = focusScene;
@@ -496,23 +538,28 @@ class _EpisodeRegion extends HookConsumerWidget {
     }
 
     // 左栏切「分镜」/「画布」：走同一条带焦点的切换；被拒时把左栏高亮拉回实际视图。
-    ref.listen(viewProvider, (_, next) async {
-      if (next == view.value) {
-        return;
-      }
-      await run(() => switchView(next));
-      if (context.mounted && view.value != next) {
-        viewState.set(view.value);
-      }
-    });
+    if (!canvasWork) {
+      ref.listen(viewProvider, (_, next) async {
+        if (next == view.value) {
+          return;
+        }
+        await run(() => switchView(next));
+        if (context.mounted && view.value != next) {
+          viewState.set(view.value);
+        }
+      });
+    }
 
     // 画布色带写场次，片段节点写「段 场号-序号」，序号按成片顺序。
     final scenes =
-        ref.watch(screenplayScenesProvider(path, episodeId)).value ??
+        (canvasWork
+            ? null
+            : ref.watch(screenplayScenesProvider(path, episodeId)).value) ??
         const <ScreenplaySceneSummary>[];
     final locationNames = {
       for (final location
-          in ref.watch(locationsProvider(path)).value ?? const <Location>[])
+          in (canvasWork ? null : ref.watch(locationsProvider(path)).value) ??
+              const <Location>[])
         location.id: location.name,
     };
     final sceneLabels = <String, String>{};
@@ -529,7 +576,7 @@ class _EpisodeRegion extends HookConsumerWidget {
     }
     final segmentLabels = <String, String>{};
     final sceneCounts = <String, int>{};
-    for (final clip in clips) {
+    for (final clip in canvasWork ? <ProductionClipRow>[] : clips) {
       final n = sceneCounts.update(
         clip.sceneId ?? '',
         (n) => n + 1,
@@ -578,7 +625,10 @@ class _EpisodeRegion extends HookConsumerWidget {
     }
 
     // 新建的节点放在当前视口中心，再选中它。
-    Future<void> placeNew(CanvasNode node) async {
+    Future<CanvasNode> placeNew(
+      CanvasNode node, {
+      bool selectNode = true,
+    }) async {
       final center = camera.center;
       if (center != null) {
         final clip = node.clipId == null
@@ -595,16 +645,34 @@ class _EpisodeRegion extends HookConsumerWidget {
         );
         node = await service.requireNode(node.id);
       }
+      if (selectNode) {
+        await select(node);
+      }
+      return node;
+    }
+
+    Future<CanvasNode> createAndPlace(
+      Future<CanvasNode> Function() create,
+    ) async {
+      final node = await recordProductionChange(
+        context,
+        const [],
+        () async => placeNew(await create(), selectNode: false),
+      );
       await select(node);
+      return node;
     }
 
     // 从资产库选一个素材放到画布；types 为空表示不限图片 / 视频 / 音频。
     Future<void> placeAsset(Set<String>? types) async {
+      if (!await session.close() || !context.mounted) {
+        return;
+      }
       final asset = types == null
           ? await pickProductionAsset(context, service)
           : await pickProductionAsset(context, service, types: types);
       if (asset != null) {
-        await placeNew(await service.addMedia(canvas.data!.id, asset.id));
+        await createAndPlace(() => service.addMedia(canvas.data!.id, asset.id));
       }
     }
 
@@ -650,28 +718,38 @@ class _EpisodeRegion extends HookConsumerWidget {
       }
     }
 
+    // 场次色带底部的「分镜」：排在这一场末尾，位置由场次排位决定，不挪到视口中心。
+    Future<void> addSegment(String sceneId) async {
+      if (!await session.close() || !context.mounted) {
+        return;
+      }
+      final overlay = ref.read(workingOverlayServiceProvider(path));
+      final node = await recordProductionChange(context, const [], () async {
+        final clip = await StoryboardEditOrchestrator().create(
+          service: shots,
+          overlay: overlay,
+          sceneId: sceneId,
+          values: const {
+            'duration_ms': ProductionCanvasService.defaultDurationMs,
+          },
+        );
+        return service.ensureShotNode(clip.id);
+      });
+      await select(node);
+    }
+
     Future<void> add(ProductionAddKind kind) async {
       if (!await session.close()) {
         return;
       }
       final overlay = ref.read(workingOverlayServiceProvider(path));
       switch (kind) {
-        case ProductionAddKind.segment:
-          final clip = await StoryboardEditOrchestrator().create(
-            service: shots,
-            overlay: overlay,
-            sceneId: workspace.sceneId,
-            values: const {
-              'duration_ms': ProductionCanvasService.defaultDurationMs,
-            },
-          );
-          await placeNew(await service.ensureShotNode(clip.id));
         case ProductionAddKind.video:
-          await placeNew(
-            await service.addFree(canvas.data!.id, overlay: overlay),
+          await createAndPlace(
+            () => service.addFree(canvas.data!.id, overlay: overlay),
           );
         case ProductionAddKind.image:
-          await placeNew(await service.addImage(canvas.data!.id));
+          await createAndPlace(() => service.addImage(canvas.data!.id));
         case ProductionAddKind.character:
         case ProductionAddKind.location:
         case ProductionAddKind.compendium:
@@ -689,8 +767,8 @@ class _EpisodeRegion extends HookConsumerWidget {
             kind: subjectKind,
           );
           if (subjectId != null) {
-            await placeNew(
-              await service.addSubject(
+            await createAndPlace(
+              () => service.addSubject(
                 canvas.data!.id,
                 characterId: kind == ProductionAddKind.character
                     ? subjectId
@@ -702,8 +780,22 @@ class _EpisodeRegion extends HookConsumerWidget {
               ),
             );
           }
+        case ProductionAddKind.text:
+          await createAndPlace(
+            () => service.addText(
+              canvas.data!.id,
+              title: context.t(LocaleKeys.productionText),
+            ),
+          );
+        case ProductionAddKind.editing:
+          await createAndPlace(
+            () => service.addEditing(
+              canvas.data!.id,
+              title: context.t(LocaleKeys.editingTitle),
+            ),
+          );
         case ProductionAddKind.audio:
-          await placeNew(await service.addAudio(canvas.data!.id));
+          await createAndPlace(() => service.addAudio(canvas.data!.id));
         case ProductionAddKind.director:
           final count = (await service.db.canvasDao.getNodesByCanvas(
             canvas.data!.id,
@@ -711,14 +803,15 @@ class _EpisodeRegion extends HookConsumerWidget {
           if (!context.mounted) {
             return;
           }
-          final node = await service.addDirector(
-            canvas.data!.id,
-            context.t(
-              LocaleKeys.productionDirectorName,
-              namedArgs: {'n': '${count + 1}'},
+          final node = await createAndPlace(
+            () => service.addDirector(
+              canvas.data!.id,
+              context.t(
+                LocaleKeys.productionDirectorName,
+                namedArgs: {'n': '${count + 1}'},
+              ),
             ),
           );
-          await placeNew(node);
           await openDirector(await service.requireNode(node.id));
       }
     }
@@ -732,11 +825,32 @@ class _EpisodeRegion extends HookConsumerWidget {
       if (!await session.close()) {
         return;
       }
+      if (source.type == canvasNodeTypeText) {
+        final clip = (await shots.getShot(target.clipId!))!;
+        final inputs = await service.draftInputs(target.id);
+        if (!inputs.any(
+          (input) => input.isPrompt && input.refId == source.id,
+        )) {
+          await service.saveDraft(
+            nodeId: target.id,
+            values: shots.snapshot(clip),
+            inputs: [...inputs, ProductionInput.text(source.id)],
+            overlay: ref.read(workingOverlayServiceProvider(path)),
+            history: history,
+          );
+        }
+        if (context.mounted) {
+          composerEpoch.value++;
+          await select(await service.requireNode(target.id));
+        }
+        return;
+      }
       if (source.type == canvasNodeTypeGroup) {
         await service.attachStoryboardGroup(
           source.id,
           target.id,
           overlay: ref.read(workingOverlayServiceProvider(path)),
+          history: history,
         );
         if (context.mounted) {
           composerEpoch.value++;
@@ -800,73 +914,74 @@ class _EpisodeRegion extends HookConsumerWidget {
       if (!context.mounted || roles.isEmpty) {
         return;
       }
-      Future<void> attach(VideoInputRole picked) async {
-        final existing = await service.draftInputs(target.id);
-        final input =
-            existing
-                .where(
-                  (i) =>
-                      i.refType == ProductionInputType.node &&
-                      i.refId == source.id &&
-                      i.role == picked,
-                )
-                .firstOrNull ??
-            ProductionInput.node(source.id, picked);
-        if (target.type == canvasNodeTypeAudio) {
-          final next = [
-            ...existing.where((e) => e.identity != input.identity),
-            input,
-          ];
-          await resolveAudioReferences(
-            service,
-            shot.modelId ?? '',
-            next,
-            providerId: shot.providerId,
-          );
-          await service.saveAudio(
-            nodeId: target.id,
-            prompt: shot.prompt,
-            providerId: shot.providerId,
-            modelId: shot.modelId,
-            inputs: next,
-            overlay: ref.read(workingOverlayServiceProvider(path)),
-          );
-        } else if (target.type == canvasNodeTypeImage) {
-          await service.saveImage(
-            nodeId: target.id,
-            draft: ProductionImageDraft(
-              prompt: shot.prompt,
-              modelId: shot.modelId ?? '',
-              providerId: shot.providerId,
-              ratio: shot.ratio,
-              resolution: shot.resolution,
-            ),
-            inputs: [
-              ...existing.where((e) => e.identity != input.identity),
-              input,
-            ],
-            overlay: ref.read(workingOverlayServiceProvider(path)),
-          );
-        } else {
-          final fresh = !existing.any((e) => e.identity == input.identity);
-          await service.save(
-            nodeId: target.id,
-            request: request,
-            providerId: shot.providerId,
-            inputs: [
-              ...existing.where((e) => e.identity != input.identity),
-              fresh && !productionUsesFrames(request.mode)
-                  ? await service.withDefaultVoice(input)
-                  : input,
-            ],
-            overlay: ref.read(workingOverlayServiceProvider(path)),
-          );
-        }
-        if (context.mounted) {
-          composerEpoch.value++;
-          await select(await service.requireNode(target.id));
-        }
-      }
+      Future<void> attach(VideoInputRole picked) =>
+          recordProductionChange(context, [target.id], () async {
+            final existing = await service.draftInputs(target.id);
+            final input =
+                existing
+                    .where(
+                      (i) =>
+                          i.refType == ProductionInputType.node &&
+                          i.refId == source.id &&
+                          i.role == picked,
+                    )
+                    .firstOrNull ??
+                ProductionInput.node(source.id, picked);
+            if (target.type == canvasNodeTypeAudio) {
+              final next = [
+                ...existing.where((e) => e.identity != input.identity),
+                input,
+              ];
+              await resolveAudioReferences(
+                service,
+                shot.modelId ?? '',
+                next,
+                providerId: shot.providerId,
+              );
+              await service.saveAudio(
+                nodeId: target.id,
+                prompt: shot.prompt,
+                providerId: shot.providerId,
+                modelId: shot.modelId,
+                inputs: next,
+                overlay: ref.read(workingOverlayServiceProvider(path)),
+              );
+            } else if (target.type == canvasNodeTypeImage) {
+              await service.saveImage(
+                nodeId: target.id,
+                draft: ProductionImageDraft(
+                  prompt: shot.prompt,
+                  modelId: shot.modelId ?? '',
+                  providerId: shot.providerId,
+                  ratio: shot.ratio,
+                  resolution: shot.resolution,
+                ),
+                inputs: [
+                  ...existing.where((e) => e.identity != input.identity),
+                  input,
+                ],
+                overlay: ref.read(workingOverlayServiceProvider(path)),
+              );
+            } else {
+              final fresh = !existing.any((e) => e.identity == input.identity);
+              await service.save(
+                nodeId: target.id,
+                request: request,
+                providerId: shot.providerId,
+                inputs: [
+                  ...existing.where((e) => e.identity != input.identity),
+                  fresh && !productionUsesFrames(request.mode)
+                      ? await service.withDefaultVoice(input)
+                      : input,
+                ],
+                overlay: ref.read(workingOverlayServiceProvider(path)),
+              );
+            }
+            if (context.mounted) {
+              composerEpoch.value++;
+              await select(await service.requireNode(target.id));
+            }
+          });
 
       if (roles.length == 1) {
         await attach(roles.single);
@@ -965,63 +1080,84 @@ class _EpisodeRegion extends HookConsumerWidget {
                         segments: clips,
                         onOpen: select,
                         taskActions: taskActions,
-                        addControl: ProductionAddDock(
-                          enabled: (kind) =>
-                              !busy.value &&
-                              (workspace.sceneId != null ||
-                                  kind != ProductionAddKind.segment),
-                          onAdd: (kind) => run(() => add(kind)),
-                          onImport: () => run(importMedia),
-                        ),
                       )
-                    : ProductionBoard(
-                        service: service,
-                        canvasId: canvas.data!.id,
-                        topInset: ScreenplayRegionToolbar.floatingExtent,
-                        selected: selected.value?.id,
-                        revealed: revealed.value,
-                        segments: clips,
-                        segmentLabels: segmentLabels,
-                        sceneLabels: sceneLabels,
-                        onSelect: select,
-                        onContextMenu: (node, at) async {
-                          await select(node);
-                          if (context.mounted &&
-                              selected.value?.id == node.id) {
-                            menuRequest.value = (
-                              nodeId: node.id,
-                              at: at,
-                              n: (menuRequest.value?.n ?? 0) + 1,
-                            );
+                    : ProductionHistoryActions(
+                        history: history,
+                        beforeRestore: session.close,
+                        onRestored: () async {
+                          final id = selected.value?.id;
+                          final restored = id == null
+                              ? null
+                              : await service.db.canvasDao.getNodeById(id);
+                          if (context.mounted) {
+                            selected.value = restored;
+                            composerEpoch.value++;
                           }
                         },
-                        beforeRemoveSelection: session.close,
-                        onClear: () => run(() async {
-                          if (selected.value != null && await session.close()) {
-                            selected.value = null;
-                          }
-                        }),
-                        camera: camera,
-                        taskActions: taskActions,
-                        onDisconnect: (inputId, targetId) => run(() async {
-                          if (!await session.close()) {
-                            return;
-                          }
-                          final target = await service.requireNode(targetId);
-                          final clip = (await shots.getShot(target.clipId!))!;
-                          await service.saveDraft(
-                            nodeId: targetId,
-                            values: shots.snapshot(clip),
-                            inputs: clip.inputs
-                                .where((input) => input.id != inputId)
-                                .toList(),
-                            overlay: ref.read(
-                              workingOverlayServiceProvider(path),
-                            ),
-                          );
-                        }),
-                        onCreateGroupReference: (groupId, video, at) =>
-                            run(() async {
+                        child: ProductionBoard(
+                          service: service,
+                          canvasId: canvas.data!.id,
+                          topInset: canvasWork
+                              ? 0
+                              : ScreenplayRegionToolbar.floatingExtent,
+                          empty: canvasWork
+                              ? CanvasEmptyStart(
+                                  onUpload: () =>
+                                      run(sceneActions.uploadScript!),
+                                  onPrompt: () =>
+                                      run(() => add(ProductionAddKind.video)),
+                                  onImport: () => run(importMedia),
+                                )
+                              : null,
+                          selected: selected.value?.id,
+                          revealed: revealed.value,
+                          segments: clips,
+                          segmentLabels: segmentLabels,
+                          sceneLabels: sceneLabels,
+                          onAddSegment: canvasWork
+                              ? null
+                              : (sceneId) => run(() => addSegment(sceneId)),
+                          onSelect: select,
+                          onContextMenu: (node, at) async {
+                            await select(node);
+                            if (context.mounted &&
+                                selected.value?.id == node.id) {
+                              menuRequest.value = (
+                                nodeId: node.id,
+                                at: at,
+                                n: (menuRequest.value?.n ?? 0) + 1,
+                              );
+                            }
+                          },
+                          beforeRemoveSelection: session.close,
+                          onClear: () => run(() async {
+                            if (selected.value != null &&
+                                await session.close()) {
+                              selected.value = null;
+                            }
+                          }),
+                          camera: camera,
+                          taskActions: taskActions,
+                          onDisconnect: (inputId, targetId) => run(() async {
+                            if (!await session.close()) {
+                              return;
+                            }
+                            final target = await service.requireNode(targetId);
+                            final clip = (await shots.getShot(target.clipId!))!;
+                            await service.saveDraft(
+                              history: history,
+                              nodeId: targetId,
+                              values: shots.snapshot(clip),
+                              inputs: clip.inputs
+                                  .where((input) => input.id != inputId)
+                                  .toList(),
+                              overlay: ref.read(
+                                workingOverlayServiceProvider(path),
+                              ),
+                            );
+                          }),
+                          onCreateGroupReference: (groupId, video, at) => run(
+                            () async {
                               if (!await session.close()) {
                                 return;
                               }
@@ -1032,6 +1168,7 @@ class _EpisodeRegion extends HookConsumerWidget {
                               );
                               final node = await service.addStoryboardReference(
                                 groupId,
+                                history: history,
                                 video: video,
                                 overlay: ref.read(
                                   workingOverlayServiceProvider(path),
@@ -1043,213 +1180,240 @@ class _EpisodeRegion extends HookConsumerWidget {
                               if (context.mounted) {
                                 await select(node);
                               }
-                            }),
-                        onConnect: (source, target, at) =>
-                            run(() => connect(source, target, at)),
-                        onOpenDirector: (node) => run(() => openDirector(node)),
-                        bar: selected.value == null
-                            ? null
-                            : ProductionNodeBar(
-                                key: ValueKey(
-                                  'bar/${selected.value!.id}/${openingResults ? resultsRequest.value!.n : 0}',
-                                ),
-                                openResults: openingResults,
-                                menuRequest:
-                                    menuRequest.value?.nodeId ==
-                                        selected.value!.id
-                                    ? (
-                                        at: menuRequest.value!.at,
-                                        n: menuRequest.value!.n,
-                                      )
-                                    : null,
-                                service: service,
-                                path: path,
-                                node: selected.value!,
-                                clip: selectedClip,
-                                segmentLabels: segmentLabels,
-                                onPreview: previewTarget == null
-                                    ? null
-                                    : () => productionRun(
-                                        context,
-                                        () => previewProductionAsset(
+                            },
+                          ),
+                          onConnect: (source, target, at) =>
+                              run(() => connect(source, target, at)),
+                          onOpenDirector: (node) =>
+                              run(() => openDirector(node)),
+                          bar: selected.value == null
+                              ? null
+                              : ProductionNodeBar(
+                                  key: ValueKey(
+                                    'bar/${selected.value!.id}/${openingResults ? resultsRequest.value!.n : 0}',
+                                  ),
+                                  openResults: openingResults,
+                                  menuRequest:
+                                      menuRequest.value?.nodeId ==
+                                          selected.value!.id
+                                      ? (
+                                          at: menuRequest.value!.at,
+                                          n: menuRequest.value!.n,
+                                        )
+                                      : null,
+                                  service: service,
+                                  path: path,
+                                  node: selected.value!,
+                                  clip: selectedClip,
+                                  segmentLabels: segmentLabels,
+                                  onPreview: previewTarget == null
+                                      ? null
+                                      : () => productionRun(
                                           context,
-                                          service,
-                                          previewTarget,
+                                          () => previewProductionAsset(
+                                            context,
+                                            service,
+                                            previewTarget,
+                                          ),
                                         ),
-                                      ),
-                                onSource: selectedClip?.sceneId == null
-                                    ? null
-                                    : () => run(() async {
-                                        if (await session.close()) {
-                                          source(selectedClip!.sceneId!);
-                                        }
-                                      }),
-                                onToSegments: selectedClip?.sceneId == null
-                                    ? null
-                                    : () => run(() async {
-                                        if (!await session.close()) {
-                                          return;
-                                        }
-                                        if (context.mounted) {
-                                          focusedClip.value = selectedClip!.id;
-                                          selected.value = null;
-                                          setView(ProductionViewMode.segments);
-                                        }
-                                      }),
-                                onCopy:
-                                    selectedClip == null ||
-                                        selectedClip.sceneId != null
-                                    ? null
-                                    : () => run(() async {
-                                        if (await session.close()) {
-                                          await select(
-                                            await service.copyVideo(
-                                              selected.value!.id,
-                                              overlay: ref.read(
-                                                workingOverlayServiceProvider(
-                                                  path,
+                                  onSource: selectedClip?.sceneId == null
+                                      ? null
+                                      : () => run(() async {
+                                          if (await session.close()) {
+                                            source(selectedClip!.sceneId!);
+                                          }
+                                        }),
+                                  onToSegments: selectedClip?.sceneId == null
+                                      ? null
+                                      : () => run(() async {
+                                          if (!await session.close()) {
+                                            return;
+                                          }
+                                          if (context.mounted) {
+                                            focusedClip.value =
+                                                selectedClip!.id;
+                                            selected.value = null;
+                                            setView(
+                                              ProductionViewMode.segments,
+                                            );
+                                          }
+                                        }),
+                                  onCopy:
+                                      selectedClip == null ||
+                                          selectedClip.sceneId != null
+                                      ? null
+                                      : () => run(() async {
+                                          if (await session.close()) {
+                                            await select(
+                                              await service.copyVideo(
+                                                selected.value!.id,
+                                                history: history,
+                                                overlay: ref.read(
+                                                  workingOverlayServiceProvider(
+                                                    path,
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                          );
-                                        }
-                                      }),
-                                onDelete: () => run(() async {
-                                  final node = selected.value;
-                                  if (node == null ||
-                                      !await session.close() ||
-                                      !context.mounted) {
-                                    return;
-                                  }
-                                  final confirmed = await showConfirmDialog(
+                                            );
+                                          }
+                                        }),
+                                  onDelete: () => run(() async {
+                                    final node = selected.value;
+                                    if (node == null ||
+                                        !await session.close() ||
+                                        !context.mounted) {
+                                      return;
+                                    }
+                                    final confirmed = await showConfirmDialog(
+                                      context,
+                                      title: context.t(LocaleKeys.commonDelete),
+                                      message: context.t(
+                                        node.clipId == null
+                                            ? LocaleKeys
+                                                  .productionDeleteNodeConfirm
+                                            : LocaleKeys
+                                                  .storyboardDeleteConfirm,
+                                        namedArgs: {'title': node.title},
+                                      ),
+                                      confirmLabel: context.t(
+                                        LocaleKeys.commonDelete,
+                                      ),
+                                      variant: ConfirmDialogVariant.error,
+                                    );
+                                    if (!confirmed || !context.mounted) {
+                                      return;
+                                    }
+                                    await service.removeNode(
+                                      node.id,
+                                      history: history,
+                                    );
+                                    if (context.mounted &&
+                                        selected.value?.id == node.id) {
+                                      selected.value = null;
+                                    }
+                                  }),
+                                  onOpenDirector: (node) =>
+                                      run(() => openDirector(node)),
+                                  onSelectNode: (node) =>
+                                      run(() => select(node)),
+                                  placeDerived: camera.placeDerived,
+                                  // 导出可能要渲染整段，不占用画布的 busy，别的操作照常进行。
+                                  onExport: (still) => productionRun(
                                     context,
-                                    title: context.t(LocaleKeys.commonDelete),
-                                    message: context.t(
-                                      node.clipId == null
-                                          ? LocaleKeys
-                                                .productionDeleteNodeConfirm
-                                          : LocaleKeys.storyboardDeleteConfirm,
-                                      namedArgs: {'title': node.title},
+                                    () => StagingExportOrchestrator().run(
+                                      canvas: service,
+                                      directorNodeId: selected.value!.id,
+                                      still: still,
                                     ),
-                                    confirmLabel: context.t(
-                                      LocaleKeys.commonDelete,
-                                    ),
-                                    variant: ConfirmDialogVariant.error,
-                                  );
-                                  if (!confirmed || !context.mounted) {
-                                    return;
-                                  }
-                                  await service.removeNode(node.id);
-                                  if (context.mounted &&
-                                      selected.value?.id == node.id) {
-                                    selected.value = null;
-                                  }
-                                }),
-                                onOpenDirector: (node) =>
-                                    run(() => openDirector(node)),
-                                onSelectNode: (node) => run(() => select(node)),
-                                placeDerived: camera.placeDerived,
-                                // 导出可能要渲染整段，不占用画布的 busy，别的操作照常进行。
-                                onExport: (still) => productionRun(
-                                  context,
-                                  () => StagingExportOrchestrator().run(
-                                    canvas: service,
-                                    directorNodeId: selected.value!.id,
-                                    still: still,
                                   ),
                                 ),
-                              ),
-                        composer: selected.value?.isGenerationNode != true
-                            ? null
-                            : SizedBox(
-                                width:
-                                    selected.value!.type == canvasNodeTypeImage
-                                    ? RevericSizes.productionComposerWidth
-                                    : RevericSizes.productionVideoComposerWidth,
-                                child:
-                                    selected.value!.type == canvasNodeTypeImage
-                                    ? ProductionImageComposer(
-                                        key: ValueKey(
-                                          '${selected.value!.id}/${composerEpoch.value}',
+                          composer: selected.value?.type == canvasNodeTypeText
+                              ? textAsk == null
+                                    ? null
+                                    : SizedBox(
+                                        width: RevericSizes
+                                            .productionComposerWidth,
+                                        child: ProductionTextComposer(
+                                          key: ValueKey(selected.value!.id),
+                                          node: selected.value!,
+                                          onSend: textAsk,
                                         ),
-                                        service: service,
-                                        node: selected.value!,
-                                        session: session,
-                                        path: path,
-                                        clip: selectedClip,
-                                        onExternalChange: () {
-                                          if (context.mounted) {
-                                            composerEpoch.value++;
-                                          }
-                                        },
                                       )
-                                    : selected.value!.type ==
-                                          canvasNodeTypeAudio
-                                    ? ProductionAudioComposer(
-                                        key: ValueKey(
-                                          '${selected.value!.id}/${composerEpoch.value}',
-                                        ),
-                                        service: service,
-                                        node: selected.value!,
-                                        session: session,
-                                        path: path,
-                                        clip: selectedClip,
-                                        onExternalChange: () {
-                                          if (context.mounted) {
-                                            composerEpoch.value++;
-                                          }
-                                        },
-                                      )
-                                    : ProductionComposer(
-                                        key: ValueKey(
-                                          '${selected.value!.id}/${composerEpoch.value}',
-                                        ),
-                                        service: service,
-                                        node: selected.value!,
-                                        session: session,
-                                        path: path,
-                                        clip: selectedClip,
-                                        onExternalChange: () {
-                                          if (context.mounted) {
-                                            composerEpoch.value++;
-                                          }
-                                        },
-                                      ),
-                              ),
-                        composerTrailingInset: chatOpen
-                            ? RevericSizes.chatPanelWidth + RevericSpacing.x2l
-                            : 0,
-                        composerBottomInset:
-                            ProductionAddDock.extent + RevericSpacing.x2l,
-                        tools: ProductionCanvasTools(
-                          onAssets: busy.value
+                              : selected.value?.isGenerationNode != true
                               ? null
-                              : () => run(() => placeAsset(null)),
-                          onImport: busy.value ? null : () => run(importMedia),
-                        ),
-                        controls: [
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: RevericSpacing.x2l,
-                            child: Center(
-                              child: ProductionAddDock(
-                                enabled: (kind) =>
-                                    !busy.value &&
-                                    (workspace.sceneId != null ||
-                                        kind != ProductionAddKind.segment),
-                                onAdd: (kind) => run(() => add(kind)),
-                                onImport: () => run(importMedia),
+                              : SizedBox(
+                                  width:
+                                      selected.value!.type ==
+                                          canvasNodeTypeImage
+                                      ? RevericSizes.productionComposerWidth
+                                      : RevericSizes
+                                            .productionVideoComposerWidth,
+                                  child:
+                                      selected.value!.type ==
+                                          canvasNodeTypeImage
+                                      ? ProductionImageComposer(
+                                          key: ValueKey(
+                                            '${selected.value!.id}/${composerEpoch.value}',
+                                          ),
+                                          service: service,
+                                          node: selected.value!,
+                                          session: session,
+                                          path: path,
+                                          clip: selectedClip,
+                                          onExternalChange: () {
+                                            if (context.mounted) {
+                                              composerEpoch.value++;
+                                            }
+                                          },
+                                        )
+                                      : selected.value!.type ==
+                                            canvasNodeTypeAudio
+                                      ? ProductionAudioComposer(
+                                          key: ValueKey(
+                                            '${selected.value!.id}/${composerEpoch.value}',
+                                          ),
+                                          service: service,
+                                          node: selected.value!,
+                                          session: session,
+                                          path: path,
+                                          clip: selectedClip,
+                                          onExternalChange: () {
+                                            if (context.mounted) {
+                                              composerEpoch.value++;
+                                            }
+                                          },
+                                        )
+                                      : ProductionComposer(
+                                          key: ValueKey(
+                                            '${selected.value!.id}/${composerEpoch.value}',
+                                          ),
+                                          service: service,
+                                          node: selected.value!,
+                                          session: session,
+                                          path: path,
+                                          clip: selectedClip,
+                                          onExternalChange: () {
+                                            if (context.mounted) {
+                                              composerEpoch.value++;
+                                            }
+                                          },
+                                        ),
+                                ),
+                          composerTrailingInset: chatOpen
+                              ? RevericSizes.chatPanelWidth + RevericSpacing.x2l
+                              : 0,
+                          composerBottomInset:
+                              ProductionAddDock.extent + RevericSpacing.x2l,
+                          tools: ProductionCanvasTools(
+                            onAssets: busy.value
+                                ? null
+                                : () => run(() => placeAsset(null)),
+                            onImport: busy.value
+                                ? null
+                                : () => run(importMedia),
+                          ),
+                          controls: [
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: RevericSpacing.x2l,
+                              child: Center(
+                                child: ProductionAddDock(
+                                  canvasWork: canvasWork,
+                                  enabled: (_) => !busy.value,
+                                  onAdd: (kind) => run(() => add(kind)),
+                                  onImport: () => run(importMedia),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
               ),
             ],
           ),
         ),
-        if (view.value != ProductionViewMode.segments)
+        if (!canvasWork && view.value != ProductionViewMode.segments)
           Positioned(top: 0, left: 0, right: 0, child: toolbar),
       ],
     );
